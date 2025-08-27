@@ -1,0 +1,46 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+venv310/
+.env/
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data & models (large files)
+*.h5
+*.pkl
+*.pt
+*.ckpt
+*.onnx
+*.joblib
+*.npy
+*.npz
+*.csv
+*.tsv
+*.zip
+*.tar.gz
+*.mp4
+*.avi
+datasets/
+data/
+
+# Logs
+*.log
+
+# Others
+*.swp
