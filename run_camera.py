@@ -1,33 +1,54 @@
+import streamlit as st
 import cv2
 import mediapipe as mp
 import numpy as np
-import pyttsx3
-import threading
 from mediapipe.python.solutions.hands import HandLandmark
+from PIL import Image
+import tensorflow as tf
 
 # ========================
-# VOICE ENGINE (Non-blocking)
+# PAGE CONFIG
 # ========================
-engine = pyttsx3.init()
-engine.setProperty("rate", 170)
+st.set_page_config(
+    page_title="Sign Language Recognition",
+    page_icon="🤟",
+    layout="wide"
+)
 
-def speak_async(text):
-    threading.Thread(target=lambda: (engine.say(text), engine.runAndWait()), daemon=True).start()
+# ========================
+# LOAD MODEL
+# ========================
+@st.cache_resource
+def load_model():
+    try:
+        return tf.keras.models.load_model("hand_digit_model_best.keras")
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        try:
+            return tf.keras.models.load_model("hand_digit_model_best.keras", compile=False)
+        except Exception as e2:
+            st.error(f"Failed to load model: {str(e2)}")
+            return None
 
 # ========================
 # MEDIAPIPE SETUP
 # ========================
-mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=2,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.7
-)
+@st.cache_resource
+def initialize_mediapipe():
+    mp_hands = mp.solutions.hands
+    mp_drawing = mp.solutions.drawing_utils
+    hands = mp_hands.Hands(
+        static_image_mode=True,  # Changed to True for single image processing
+        max_num_hands=2,
+        min_detection_confidence=0.7,
+        min_tracking_confidence=0.7
+    )
+    return mp_hands, mp_drawing, hands
+
+mp_hands, mp_drawing, hands = initialize_mediapipe()
 
 # ========================
-# SIMPLE AND ACCURATE FINGER COUNTING
+# FINGER COUNTING FUNCTION
 # ========================
 def count_fingers(hand_landmarks, hand_label):
     """
@@ -78,38 +99,23 @@ def count_fingers(hand_landmarks, hand_label):
     return fingers, sum(fingers)
 
 # ========================
-# CAMERA LOOP
+# IMAGE PROCESSING FUNCTION
 # ========================
-cap = cv2.VideoCapture(0)
-
-# Set camera properties
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-cv2.namedWindow("Simple Finger Counter", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("Simple Finger Counter", 1200, 800)
-
-# Make window fullscreen
-cv2.namedWindow("Simple Finger Counter", cv2.WND_PROP_FULLSCREEN)
-cv2.setWindowProperty("Simple Finger Counter", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-last_total = None
-frame_count = 0
-
-print("Simple Finger Counter Started")
-print("Press ESC to exit")
-
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        break
+def process_image(image):
+    """Process uploaded image for sign language recognition"""
+    # Convert PIL to OpenCV
+    image_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     
-    frame_count += 1
-    frame = cv2.flip(frame, 1)
-    h, w, c = frame.shape
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # Flip image for mirror effect
+    image_cv = cv2.flip(image_cv, 1)
+    h, w, c = image_cv.shape
+    
+    # Convert to RGB for MediaPipe
+    rgb = cv2.cvtColor(image_cv, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb)
     
     total_fingers = 0
+    hand_details = []
     
     if results.multi_hand_landmarks and results.multi_handedness:
         for idx, (hand_landmarks, handedness) in enumerate(zip(results.multi_hand_landmarks, results.multi_handedness)):
@@ -118,73 +124,144 @@ while cap.isOpened():
             hand_label = handedness.classification[0].label
             
             # Draw hand landmarks
-            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            mp_drawing.draw_landmarks(image_cv, hand_landmarks, mp_hands.HAND_CONNECTIONS)
             
             # Count fingers
             finger_status, finger_count = count_fingers(hand_landmarks, hand_label)
             total_fingers += finger_count
             
-            # Display results for this hand
-            y_pos = 50 + (idx * 200)
+            # Store hand details
+            hand_details.append({
+                'hand': hand_label,
+                'count': finger_count,
+                'fingers': finger_status
+            })
             
-            # Hand label and count
-            cv2.putText(frame, f"{hand_label} Hand: {finger_count}", 
+            # Add text to image
+            y_pos = 50 + (idx * 200)
+            cv2.putText(image_cv, f"{hand_label} Hand: {finger_count}", 
                        (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
-            # Individual finger status with detailed thumb info
+            # Individual finger status
             finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
             for i, (name, status) in enumerate(zip(finger_names, finger_status)):
                 color = (0, 255, 0) if status else (0, 0, 255)
                 status_text = "UP" if status else "DOWN"
-                cv2.putText(frame, f"{name}: {status_text}", 
+                cv2.putText(image_cv, f"{name}: {status_text}", 
                            (20, y_pos + 30 + (i * 25)), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            
-            # Show thumb position for debugging with threshold info
-            thumb_tip = hand_landmarks.landmark[HandLandmark.THUMB_TIP]
-            thumb_mcp = hand_landmarks.landmark[HandLandmark.THUMB_MCP]
-            thumb_diff = abs(thumb_tip.x - thumb_mcp.x)
-            threshold_met = thumb_diff >= 0.015
-            threshold_color = (0, 255, 0) if threshold_met else (0, 0, 255)
-            cv2.putText(frame, f"Thumb distance: {thumb_diff:.3f} (need: 0.015)", 
-                       (20, y_pos + 155), cv2.FONT_HERSHEY_SIMPLEX, 0.5, threshold_color, 1)
     
-    # Display total count
-    cv2.putText(frame, f"TOTAL: {total_fingers}", 
+    # Add total count
+    cv2.putText(image_cv, f"TOTAL: {total_fingers}", 
                (w//2 - 100, 80), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 3)
     
-    # Instructions with updated thumb tips
-    cv2.putText(frame, "For 5 fingers: Just show natural open palm", 
-               (20, h - 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-    cv2.putText(frame, "For 4 fingers: Tuck thumb into palm", 
-               (20, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-    cv2.putText(frame, "Press ESC to exit", 
-               (20, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    # Convert back to RGB for Streamlit
+    result_image = cv2.cvtColor(image_cv, cv2.COLOR_BGR2RGB)
     
-    # Voice feedback (less frequent)
-    if frame_count % 30 == 0:  # Every 30 frames
-        if total_fingers != last_total:
-            if total_fingers == 0:
-                speak_async("Zero")
-            elif total_fingers == 1:
-                speak_async("One")
-            elif total_fingers == 2:
-                speak_async("Two")
-            elif total_fingers == 3:
-                speak_async("Three")
-            elif total_fingers == 4:
-                speak_async("Four")
-            elif total_fingers == 5:
-                speak_async("Five")
-            else:
-                speak_async(f"{total_fingers}")
-            last_total = total_fingers
-    
-    cv2.imshow("Simple Finger Counter", frame)
-    
-    if cv2.waitKey(1) & 0xFF == 27:  # ESC key
-        break
+    return result_image, total_fingers, hand_details
 
-cap.release()
-cv2.destroyAllWindows()
-print("Application closed successfully!")
+# ========================
+# MAIN APP
+# ========================
+def main():
+    st.title("🤟 Hybrid Sign Language Recognition")
+    st.write("✅ Detects both hands, counts fingers, and predicts CNN digit.")
+    
+    # Load model
+    model = load_model()
+    if model is None:
+        st.error("Model failed to load. Please check the model file.")
+        return
+    
+    # Sidebar with instructions
+    with st.sidebar:
+        st.header("Instructions")
+        st.write("📸 **Take a photo** using the camera input")
+        st.write("🖐️ **Show your hand(s)** with fingers clearly visible")
+        st.write("🔢 **Get results** for finger counting and digit prediction")
+        st.write("")
+        st.write("**Tips for best results:**")
+        st.write("- Use good lighting")
+        st.write("- Keep hands in frame")
+        st.write("- For 5 fingers: show natural open palm")
+        st.write("- For 4 fingers: tuck thumb into palm")
+    
+    # Camera input
+    camera_input = st.camera_input("Take a picture of your hand gesture")
+    
+    if camera_input is not None:
+        # Display original image
+        image = Image.open(camera_input)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Original Image")
+            st.image(image, use_column_width=True)
+        
+        with col2:
+            st.subheader("Analysis Results")
+            
+            # Process the image
+            with st.spinner("Analyzing hand gesture..."):
+                result_image, total_fingers, hand_details = process_image(image)
+            
+            # Display processed image
+            st.image(result_image, use_column_width=True)
+        
+        # Results section
+        st.header("📊 Detection Results")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Fingers", total_fingers)
+        
+        with col2:
+            st.metric("Hands Detected", len(hand_details))
+        
+        with col3:
+            # Convert number to word
+            number_words = ["Zero", "One", "Two", "Three", "Four", "Five", 
+                          "Six", "Seven", "Eight", "Nine", "Ten"]
+            word = number_words[total_fingers] if total_fingers < len(number_words) else str(total_fingers)
+            st.metric("In Words", word)
+        
+        # Detailed hand analysis
+        if hand_details:
+            st.header("🖐️ Hand Analysis")
+            for i, hand in enumerate(hand_details):
+                with st.expander(f"{hand['hand']} Hand - {hand['count']} fingers"):
+                    finger_names = ["Thumb", "Index", "Middle", "Ring", "Pinky"]
+                    
+                    cols = st.columns(5)
+                    for j, (finger, status) in enumerate(zip(finger_names, hand['fingers'])):
+                        with cols[j]:
+                            status_emoji = "👆" if status else "👇"
+                            st.write(f"{status_emoji} {finger}")
+        
+        # CNN Prediction (if you want to add this)
+        if st.button("🤖 Get CNN Prediction"):
+            with st.spinner("Running CNN prediction..."):
+                try:
+                    # Preprocess image for CNN
+                    img_array = np.array(image.resize((64, 64)))  # Adjust size as needed
+                    img_array = img_array.astype('float32') / 255.0
+                    img_array = np.expand_dims(img_array, axis=0)
+                    
+                    # Make prediction
+                    prediction = model.predict(img_array)
+                    predicted_digit = np.argmax(prediction[0])
+                    confidence = np.max(prediction[0])
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("CNN Prediction", predicted_digit)
+                    with col2:
+                        st.metric("Confidence", f"{confidence:.2%}")
+                        
+                except Exception as e:
+                    st.error(f"CNN prediction failed: {str(e)}")
+
+if __name__ == "__main__":
+    main()
