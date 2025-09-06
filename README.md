@@ -1,6 +1,10 @@
 <h1>📌 Sign Language Digit Recognition</h1>
 
 This project is a real-time sign language digit recognition system that uses MediaPipe, OpenCV, and a deep learning model (CNN) to detect and recognize hand gestures representing digits (0–9). It provides both visual and voice feedback for accessibility and smooth interaction.<br><br>
+
+👉 Try the live demo here:
+🔗https://signlanguagedigitrecognition-livktr9ejvezjnvjm7hnnz.streamlit.app/<br><br>
+
 <h3>🚀 Features</h3>
 
 Real-Time Hand Detection: Uses MediaPipe Hands for accurate detection and tracking of finger positions.
