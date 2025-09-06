@@ -10,9 +10,16 @@ from mediapipe.python.solutions.hands import HandLandmark
 # ========================
 @st.cache_resource
 def load_model():
-    return tf.keras.models.load_model("hand_digit_model_best.keras")
-
-model = load_model()
+    try:
+        return tf.keras.models.load_model("hand_digit_model_best.keras")
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        # Try loading without compiling
+        try:
+            return tf.keras.models.load_model("hand_digit_model_best.keras", compile=False)
+        except Exception as e2:
+            st.error(f"Failed to load model even without compiling: {str(e2)}")
+            st.stop()
 
 # ========================
 # Mediapipe setup
@@ -115,3 +122,4 @@ with mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.7, min_tracking_
         FRAME_WINDOW.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
 cap.release()
+
